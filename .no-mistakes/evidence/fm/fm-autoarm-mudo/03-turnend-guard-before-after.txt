@@ -1,0 +1,17 @@
+############################################################
+# BEFORE THE FIX (base 269f8fe) - fm-turnend-guard.sh --claude
+############################################################
+scenario: supervision verified healthy, but the failure-episode reset
+          cannot be recorded (state dir refuses the bookkeeping write)
+exit code: 2  (2 = turn BLOCKED)
+operator-visible output: <EMPTY - nothing named a cause>
+
+############################################################
+# AFTER THE FIX (75a78f9) - fm-turnend-guard.sh --claude, same scenario
+############################################################
+scenario: supervision verified healthy, but the failure-episode reset
+          cannot be recorded (state dir refuses the bookkeeping write)
+exit code: 2  (2 = turn BLOCKED)
+operator-visible output:
+  | firstmate turn-end guard HELD THIS TURN OPEN - supervision for this home is verified healthy, but the failure-episode reset could not be recorded, so the previous failure cannot be proven closed. Read the episode outcome in /tmp/fm-turnend-guard.EhNa0S/transcript-unrecordable/state/.claude-autoarm-epoch.
+  | The reset serializes on /tmp/fm-turnend-guard.EhNa0S/transcript-unrecordable/state/.turnend-claude-blocks.lock and clears /tmp/fm-turnend-guard.EhNa0S/transcript-unrecordable/state/.turnend-claude-blocks, /tmp/fm-turnend-guard.EhNa0S/transcript-unrecordable/state/.claude-autoarm-failure-notified and /tmp/fm-turnend-guard.EhNa0S/transcript-unrecordable/state/.claude-autoarm-failure-alarmed: a busy lock, or any of those three existing as a directory, refuses it. A state directory that refuses these writes keeps every turn blocked until it is repaired.

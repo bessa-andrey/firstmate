@@ -1,0 +1,18 @@
+# The colocated regression test run against the PRE-FIX bin scripts (base 269f8fe),
+# same tests/ from the target commit, same host mount that reverts chmod 600 -> 777.
+
+not ok - mode-incapable home: firing 1 did not name the episode record (missing: '.claude-autoarm-epoch')
+--- output ---
+firstmate watcher auto-arm FAILED - the Stop-owned automatic supervision mechanism is broken after 2 bounded attempts, and no live watcher with a fresh beacon was verified.
+Do not launch a manual background arm from this notice; investigate the automatic Stop hook and watcher startup before ending blind.
+exit=1
+
+# The same cases against the TARGET commit (75a78f9)
+
+ok - auto-arm: every consecutive failure blocks loudly while the full notice stays once per episode
+ok - auto-arm: a refusal with none of the arm's typed prefixes is still named in every block
+ok - auto-arm: a refusal raised below the arm is named beside the arm's own typed close
+ok - auto-arm: an arm with no output of its own still yields a block that names itself
+ok - auto-arm: output the hook could not capture is never reported as an arm that said nothing
+ok - auto-arm: a state directory that cannot hold restricted modes never blocks a turn with empty output
+ok - auto-arm: a home whose state dir can hold restricted modes keeps its silent and actionable paths unchanged

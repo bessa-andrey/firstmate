@@ -1,0 +1,33 @@
+############################################################
+# AFTER THE FIX (75a78f9) - same chmod-reverting filesystem, same fixture
+############################################################
+home state dir: /mnt/c/fm-autoarm-modeless.LmUPdi/home.rFEpSN/state
+filesystem:     9p     C:\
+chmod 600 on a state artifact came back as: 777   (same command on the Linux disk yields 600)
+
+--- turn end #1 ------------------------------------------
+exit code: 2  (2 = turn BLOCKED, harness re-wakes the session)
+operator-visible output:
+  | firstmate watcher auto-arm FAILED - the Stop-owned automatic supervision mechanism is broken after 2 bounded attempts, and no live watcher with a fresh beacon was verified.
+  | fm-pr-check-migrate: cannot publish /mnt/c/fm-autoarm-modeless.LmUPdi/home.rFEpSN/state/pr-check.tmp: mode 777, expected 600
+  | Episode state is recorded in /mnt/c/fm-autoarm-modeless.LmUPdi/home.rFEpSN/state/.claude-autoarm-epoch.
+  | Do not launch a manual background arm from this notice; investigate the automatic Stop hook and watcher startup before ending blind.
+
+--- turn end #2 ------------------------------------------
+exit code: 2  (2 = turn BLOCKED, harness re-wakes the session)
+operator-visible output:
+  | firstmate watcher auto-arm STILL FAILING - this turn is held open for another Stop-owned retry. The full notice for this failure episode was already delivered, so only the current cause is repeated here.
+  | fm-pr-check-migrate: cannot publish /mnt/c/fm-autoarm-modeless.LmUPdi/home.rFEpSN/state/pr-check.tmp: mode 777, expected 600
+  | Episode state is recorded in /mnt/c/fm-autoarm-modeless.LmUPdi/home.rFEpSN/state/.claude-autoarm-epoch (outcome=failed-suppressed). Investigate the automatic Stop hook and watcher startup; do not launch a manual background arm.
+
+--- turn end #3 ------------------------------------------
+exit code: 2  (2 = turn BLOCKED, harness re-wakes the session)
+operator-visible output:
+  | firstmate watcher auto-arm STILL FAILING - this turn is held open for another Stop-owned retry. The full notice for this failure episode was already delivered, so only the current cause is repeated here.
+  | fm-pr-check-migrate: cannot publish /mnt/c/fm-autoarm-modeless.LmUPdi/home.rFEpSN/state/pr-check.tmp: mode 777, expected 600
+  | Episode state is recorded in /mnt/c/fm-autoarm-modeless.LmUPdi/home.rFEpSN/state/.claude-autoarm-epoch (outcome=failed-suppressed). Investigate the automatic Stop hook and watcher startup; do not launch a manual background arm.
+
+epoch ledger after the three blocked turns:
+  | epoch=3 owner_pid=458842 outcome=failed-suppressed updated_at=1789009696
+  | linux-starttime=7173487 cmdline-hex=62617368002f6d6e742f632f666d2d6175746f61726d2d6d6f64656c6573732e4c6d555064692f686f6d652e72464570534e2f62696e2f666d2d636c617564652d73746f702d6175746f61726d2e736800
+

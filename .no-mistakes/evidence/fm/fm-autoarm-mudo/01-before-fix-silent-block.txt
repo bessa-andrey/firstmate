@@ -1,0 +1,25 @@
+############################################################
+# BEFORE THE FIX (base 269f8fe) - state dir on a chmod-reverting filesystem
+############################################################
+home state dir: /mnt/c/fm-autoarm-modeless.5bZ2LS/home.p6xny8/state
+filesystem:     9p     C:\
+chmod 600 on a state artifact came back as: 777   (same command on the Linux disk yields 600)
+
+--- turn end #1 ------------------------------------------
+exit code: 2  (2 = turn BLOCKED, harness re-wakes the session)
+operator-visible output:
+  | firstmate watcher auto-arm FAILED - the Stop-owned automatic supervision mechanism is broken after 2 bounded attempts, and no live watcher with a fresh beacon was verified.
+  | Do not launch a manual background arm from this notice; investigate the automatic Stop hook and watcher startup before ending blind.
+
+--- turn end #2 ------------------------------------------
+exit code: 2  (2 = turn BLOCKED, harness re-wakes the session)
+operator-visible output: <EMPTY - nothing named a cause>
+
+--- turn end #3 ------------------------------------------
+exit code: 2  (2 = turn BLOCKED, harness re-wakes the session)
+operator-visible output: <EMPTY - nothing named a cause>
+
+epoch ledger after the three blocked turns:
+  | epoch=3 owner_pid=457081 outcome=failed-suppressed updated_at=1789009684
+  | linux-starttime=7172606 cmdline-hex=62617368002f6d6e742f632f666d2d6175746f61726d2d6d6f64656c6573732e35625a324c532f686f6d652e7036786e79382f62696e2f666d2d636c617564652d73746f702d6175746f61726d2e736800
+

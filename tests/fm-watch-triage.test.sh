@@ -2348,6 +2348,214 @@ test_nonterminal_stale_paused_absorbed_then_resurfaced() {
   pass "a declared pause is absorbed on first sight, then re-surfaced as a recheck past the threshold, never wedge-escalated"
 }
 
+# The reported defect (2026-09-02, reproduced 2026-09-12): a declared pause was
+# reconfirmed every two or three minutes instead of once per PAUSE_RESURFACE_SECS,
+# spending a firstmate turn on a wait that had not changed. The classifier was
+# never wrong - the absorbing paths logged thousands of correct absorbs - but a
+# PANE event was clearing DECLARATION-scoped bookkeeping. A worker that declares a
+# wait ends its turn, so its completed-turn marker is fresh and the busy-turn bound
+# has not crossed; any momentary busy signature on that parked pane then reached
+# the full clear, erased the re-surface throttle, and the next idle sighting read no
+# throttle and alarmed again. The wait itself is unchanged throughout, so the
+# recheck cadence must be unchanged too.
+test_busy_blip_does_not_restart_the_declared_pause_cadence() {
+  local spec name status_line dir state fakebin out capture_file statusf window key
+  local sig round wakes bare throttle busy_text idle_text
+  busy_text='thinking about the reply  Ctrl+c:cancel'
+  for spec in \
+    'paused-busy-blip|paused: waiting on the captain to decide' \
+    'captain-held-busy-blip|captain-held [key=route]: awaiting the captain on the routing call'
+  do
+    name=${spec%%|*}; status_line=${spec#*|}
+    dir=$(make_case "$name"); state="$dir/state"; fakebin="$dir/fakebin"
+    out="$dir/watch.out"; capture_file="$dir/pane.txt"; statusf="$state/parked.status"
+    window="test:fm-parked"
+    printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" > "$state/parked.meta"
+    printf '%s\n' "$status_line" > "$statusf"
+    sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
+    key=$(printf '%s' "$window" | tr ':/.' '___')
+    throttle="$state/.paused-resurfaced-$key"
+    # The worker declared the wait and ended its turn, so the completed-turn marker
+    # is fresh and the busy-turn bound has NOT crossed - the exact shape in which a
+    # busy signature used to reach the full clear.
+    : > "$state/parked.turn-ended"
+    prime_turnend_seen "$state/parked.turn-ended"
+
+    idle_text='parked, elapsed 1s'
+    printf '%s' "$idle_text" > "$capture_file"
+    printf '%s' "$(hash_text "$idle_text")" > "$state/.hash-$key"
+    printf '1\n' > "$state/.count-$key"
+    parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" exit \
+      || fail "[$name] first sight of a parked live worker did not surface"
+    ack_stopped_cycle "$state" || fail "[$name] could not acknowledge the first surface"
+    [ -e "$throttle" ] || fail "[$name] the first surface recorded no re-surface throttle"
+
+    # The parked pane now blinks busy and goes quiet again, repeatedly, while the
+    # SAME declared wait stands. Every blip used to cost a firstmate turn.
+    round=2
+    while [ "$round" -le 4 ]; do
+      printf '%s' "$busy_text" > "$capture_file"
+      parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" absorb \
+        || fail "[$name] watcher exited on the busy blip of round $round"
+      [ -e "$throttle" ] \
+        || fail "[$name] a busy blip cleared the re-surface throttle on round $round"
+      printf 'parked, elapsed %ss' "$round" > "$capture_file"
+      parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" absorb \
+        || fail "[$name] watcher exited after the busy blip of round $round"
+      wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' \
+        "$state/.wake-queue" 2>/dev/null || echo 0)
+      [ "$wakes" -eq 0 ] \
+        || fail "[$name] a busy blip re-alarmed an unchanged declared wait $wakes time(s) on round $round"
+      [ -e "$throttle" ] \
+        || fail "[$name] the idle sighting after a busy blip lost the re-surface throttle"
+      round=$((round + 1))
+    done
+
+    # Silencing is the failure this bound must never trade for quiet: once the
+    # window elapses, the same unchanged wait is reconfirmed exactly once.
+    set_mtime "$(( $(date +%s) - 2000 ))" "$throttle"
+    printf 'parked, elapsed 9s' > "$capture_file"
+    parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" exit \
+      || fail "[$name] the declared wait was not reconfirmed once its re-surface window elapsed"
+    wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' \
+      "$state/.wake-queue" 2>/dev/null || echo 0)
+    bare=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w && $5 == "stale: " w { n++ } END { print n + 0 }' \
+      "$state/.wake-queue" 2>/dev/null || echo 0)
+    [ "$wakes" -eq 1 ] || fail "[$name] the elapsed re-surface window produced $wakes wakes instead of one"
+    [ "$bare" -eq 1 ] || fail "[$name] the elapsed re-surface changed the wake identity: $(cat "$state/.wake-queue")"
+  done
+  pass "a busy blip on a parked pane keeps the declared wait on its long recheck cadence, and the wait is still reconfirmed when that window elapses"
+}
+
+# The inverse of the bound above, and the one it must never buy quiet with. A pane
+# carrying no standing declaration keeps the detection it has today: its pause
+# bookkeeping is cleared in full by the same pane event, and a worker that goes
+# quiet with nothing declared still wakes firstmate.
+test_pane_without_a_standing_declaration_still_alarms() {
+  local dir state fakebin out capture_file statusf window key sig pid wakes busy_text
+
+  # A: the worker lifted its own wait. The busy blip must take the whole of its
+  # pause bookkeeping with it, or a stale declaration would keep bounding a pane
+  # that is no longer waiting on anything.
+  busy_text='thinking about the reply  Ctrl+c:cancel'
+  dir=$(make_case lifted-wait-busy-blip); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; statusf="$state/parked.status"
+  window="test:fm-parked"; key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" > "$state/parked.meta"
+  printf 'paused: waiting on the captain to decide\n' > "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
+  : > "$state/parked.turn-ended"
+  prime_turnend_seen "$state/parked.turn-ended"
+  printf 'parked, elapsed 1s' > "$capture_file"
+  printf '%s' "$(hash_text "parked, elapsed 1s")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" exit \
+    || fail "first sight of the parked worker did not surface"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the first surface"
+  [ -e "$state/.paused-resurfaced-$key" ] || fail "the first surface recorded no re-surface throttle"
+  # The worker resumes and says so, then its pane blinks busy.
+  printf 'working: resumed after the captain answered\n' >> "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
+  printf '%s' "$busy_text" > "$capture_file"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=grok \
+    FM_FAKE_CREW_STATE='state: working · source: status-log · resumed' \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PAUSE_RESURFACE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" >> "$out" &
+  pid=$!
+  wait_poll_cycle "$state" "$pid" || { reap "$pid"; fail "watcher exited while the resumed worker was busy"; }
+  wait_poll_cycle "$state" "$pid" || { reap "$pid"; fail "watcher exited while the resumed worker was busy"; }
+  reap "$pid"
+  [ ! -e "$state/.paused-resurfaced-$key" ] \
+    || fail "a lifted wait kept its re-surface throttle, so a pane that declares nothing would stay bounded"
+  [ ! -e "$state/.paused-$key" ] \
+    || fail "a lifted wait kept its pause flag, so a pane that declares nothing would keep the bounded cadence"
+
+  # B: a worker that never declared anything and simply went quiet. This is the
+  # alarm the bound above must not silence.
+  dir=$(make_case undeclared-quiet-worker); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; statusf="$state/quiet.status"
+  window="test:fm-quiet"; key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" > "$state/quiet.meta"
+  printf 'working: halfway through the migration\n' > "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-quiet_status"
+  printf 'idle prompt, nothing running' > "$capture_file"
+  printf '%s' "$(hash_text "idle prompt, nothing running")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=grok \
+    FM_FAKE_CREW_STATE='state: stopped · source: pane · idle prompt' \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PAUSE_RESURFACE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" >> "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "a quiet worker with nothing declared did not wake firstmate"
+  wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' \
+    "$state/.wake-queue" 2>/dev/null || echo 0)
+  [ "$wakes" -ge 1 ] || fail "a quiet worker with nothing declared queued no stale wake"
+  pass "a pane with no standing declaration loses its pause bookkeeping to the same pane event and still wakes firstmate"
+}
+
+# The captain's third concern: a relaunch must not hand an unchanged wait a fresh
+# cadence. bin/fm-spawn.sh --relaunch reuses the task's recorded endpoint, so the
+# window key and its markers survive; what a relaunch really resets is the
+# collateral state the bound above depends on - it rewrites the task metadata and
+# the replacement agent records a completed turn, so the busy-turn bound is back
+# below its threshold while the replacement's startup renders a busy pane. That is
+# the same shape as the busy blip, arriving by a different route.
+test_relaunch_does_not_restart_the_declared_pause_cadence() {
+  local dir state fakebin out capture_file statusf window key sig wakes throttle busy_text
+  busy_text='starting up  Ctrl+c:cancel'
+  dir=$(make_case relaunch-keeps-cadence); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; statusf="$state/parked.status"
+  window="test:fm-parked"; key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" > "$state/parked.meta"
+  printf 'paused: waiting on the captain to decide\n' > "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
+  throttle="$state/.paused-resurfaced-$key"
+  printf 'parked, elapsed 1s' > "$capture_file"
+  printf '%s' "$(hash_text "parked, elapsed 1s")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" exit \
+    || fail "first sight of the parked worker did not surface"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the first surface"
+  [ -e "$throttle" ] || fail "the first surface recorded no re-surface throttle"
+
+  # The relaunch: same endpoint, rewritten metadata, a completed turn from the
+  # replacement agent, and a busy startup pane. The declared wait is untouched.
+  printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\nspawn_gen=s2\n' "$window" \
+    > "$state/parked.meta"
+  : > "$state/parked.turn-ended"
+  prime_turnend_seen "$state/parked.turn-ended"
+  printf '%s' "$busy_text" > "$capture_file"
+  parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" absorb \
+    || fail "watcher exited on the replacement agent's busy startup pane"
+  [ -e "$throttle" ] || fail "the relaunch cleared the declared wait's re-surface throttle"
+  printf 'parked after the relaunch, elapsed 2s' > "$capture_file"
+  parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" absorb \
+    || fail "watcher exited after the relaunch instead of supervising through it"
+  wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' \
+    "$state/.wake-queue" 2>/dev/null || echo 0)
+  [ "$wakes" -eq 0 ] \
+    || fail "a relaunch re-alarmed an unchanged declared wait $wakes time(s) inside its re-surface window"
+  [ -e "$throttle" ] || fail "the idle sighting after the relaunch lost the re-surface throttle"
+
+  # The preserved throttle bounds the wait it was recorded for, and nothing else:
+  # a replacement worker that declares a DIFFERENT wait starts its own window and
+  # is surfaced at once rather than inheriting the old wait's silence.
+  printf 'paused: waiting on the captain to confirm the new plan\n' >> "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
+  printf 'parked after the relaunch, elapsed 3s' > "$capture_file"
+  parked_watch_round "$state" "$fakebin" "$out" "$capture_file" "$window" exit \
+    || fail "a replacement wait declared after the relaunch inherited the previous wait's silence"
+  wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' \
+    "$state/.wake-queue" 2>/dev/null || echo 0)
+  [ "$wakes" -eq 1 ] \
+    || fail "a replacement wait after the relaunch produced $wakes first wakes instead of one"
+  pass "a relaunch keeps an unchanged declared wait on its long recheck cadence while a different wait declared afterwards still surfaces at once"
+}
+
 # A captain-held crew can leave a stable backend endpoint after its agent exits.
 # fm-crew-state then authoritatively reports stopped rather than paused, but the
 # confirmed-dead agent plus the declared wait or captain-held transfer must retain
@@ -6214,6 +6422,9 @@ test_nonterminal_stale_paused_absorbed_then_resurfaced
 test_exited_declared_pause_is_bounded_but_live_gate_surfaces
 test_absorbed_replacement_wait_does_not_inherit_the_old_throttle
 test_live_declared_wait_churn_honors_the_resurface_throttle
+test_busy_blip_does_not_restart_the_declared_pause_cadence
+test_pane_without_a_standing_declaration_still_alarms
+test_relaunch_does_not_restart_the_declared_pause_cadence
 test_live_paused_until_controls_recheck_time
 test_wedge_threshold_defers_to_a_declared_wait_under_a_working_verdict
 test_wedge_threshold_recheck_names_the_captain_for_a_held_lane

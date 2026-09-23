@@ -2923,7 +2923,7 @@ EOF
         # recorded it, and never the declaration-scoped half while the worker's own
         # line still declares the wait (clear_pane_stale_tracking owns that split).
         if [ "$paused_bound" -ne 0 ] && [ -e "$pf" ]; then
-          pane_last=$(last_status_line "$STATE/$(window_to_task "$w" "$STATE").status")
+          pane_last=$(last_status_line "$STATE/$task.status")
           if [ "$n" -ge 2 ] || ! status_is_paused_or_captain_held "$pane_last"; then
             clear_pane_stale_tracking "$key" "$pane_last"
           fi

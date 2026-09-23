@@ -1,0 +1,23 @@
+== home: /mnt/c/Users/bessa/AppData/Local/Temp/fm-live-home.elWkGE  (mount: v9fs)
+state dir mode after chmod 700: 777
+check.sh mode after chmod 700: 777
+== $ fm-check-register.sh probe
+registered: state/probe.check.sh
+exit=0
+.fm-artifact-signing-key
+probe.check-trust
+probe.check-trust.fm-sig
+probe.check.sh
+probe.check.sh.fm-sig
+== $ fm-watch.sh (one bounded cycle)
+exit=0
+-- stdout:
+check: /mnt/c/Users/bessa/AppData/Local/Temp/fm-live-home.elWkGE/state/probe.check.sh: check: probe fired from a mode-incapable state dir
+-- stderr (tail):
+(acked wake 1)
+== tamper: append a line to probe.check.sh after the seal
+exit=0
+-- stdout:
+check: rejected unauthenticated state checks: /mnt/c/Users/bessa/AppData/Local/Temp/fm-live-home.elWkGE/state/probe.check.sh
+-- stderr (tail):
+RESULT: tampered check not executed

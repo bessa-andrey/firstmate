@@ -1,0 +1,25 @@
+== home: /tmp/tmp.F7w0gAYNkI/fm-live-home.iYfK5m  (mount: ext2/ext3)
+state dir mode after chmod 700: 700
+check.sh mode after chmod 700: 700
+== $ fm-check-register.sh probe
+registered: state/probe.check.sh
+exit=0
+probe.check-trust
+probe.check.sh
+== $ fm-watch.sh (one bounded cycle)
+exit=0
+-- stdout:
+check: /tmp/tmp.F7w0gAYNkI/fm-live-home.iYfK5m/state/probe.check.sh: check: probe fired from a mode-incapable state dir
+-- stderr (tail):
+(acked wake 1)
+== tamper: append a line to probe.check.sh after the seal
+exit=0
+-- stdout:
+check: rejected unauthenticated state checks: /tmp/tmp.F7w0gAYNkI/fm-live-home.iYfK5m/state/probe.check.sh
+-- stderr (tail):
+RESULT: tampered check not executed
+== capable fs: check.sh left at mode 644; $ fm-check-register.sh loose
+error: custom check is unavailable
+exit=1
+mode after: 644
+loose.check.sh

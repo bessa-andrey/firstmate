@@ -1,0 +1,6 @@
+== BASE 9296f9b on /mnt/c (check.sh mode 777): $ fm-check-register.sh probe
+error: custom check is unavailable
+exit=1
+== TARGET 1d060cc same dir: $ fm-check-register.sh probe
+registered: state/probe.check.sh
+exit=0

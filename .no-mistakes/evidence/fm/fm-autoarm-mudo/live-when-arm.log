@@ -1,0 +1,10 @@
+== state on v9fs (state mode 777): $ fm-procevent-when.sh arm probe --condition /bin/true --action /bin/true
+error: state directory is not a private directory the process-event runtime accepts; a watch armed here would never start
+exit=1
+state/when contents: 
+== state on ext2/ext3 (state mode 700): $ fm-procevent-when.sh arm probe --condition /bin/true --action /bin/true
+armed: when-probe
+starts on the watcher's next cycle; or run: bin/fm-procevent.sh reconcile
+reminder: deterministic, safe, reversible actions only; judgment and destructive actions stay on the wake-and-decide path
+exit=0
+state/when contents: when-probe.spec when-probe.trust 

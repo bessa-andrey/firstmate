@@ -1,0 +1,57 @@
+### mount: C:\ on /mnt/c type 9p (rw,noatime,aname=drvfs;path=C:\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=5,access=client,msize=65536,trans=fd,rfd=6,wfd=6)
+
+=== [base] mode-incapable home /mnt/c/fm-live-modeless.MuCUS3/base  (state mode after chmod 700: 777; check mode after chmod 700: 777)
+$ FM_HOME=/mnt/c/fm-live-modeless.MuCUS3/base base/bin/fm-check-register.sh demo
+error: custom check is unavailable
+exit=1
+-rwxrwxrwx 1 bessabr bessabr   18 Sep 23 16:05 demo.check.sh
+$ FM_HOME=/mnt/c/fm-live-modeless.MuCUS3/base base/bin/fm-procevent-when.sh arm live --condition true --action true
+error: published spec failed validation
+exit=1
+
+=== [head] mode-incapable home /mnt/c/fm-live-modeless.MuCUS3/head  (state mode after chmod 700: 777; check mode after chmod 700: 777)
+$ FM_HOME=/mnt/c/fm-live-modeless.MuCUS3/head head/bin/fm-check-register.sh demo
+registered: state/demo.check.sh
+exit=0
+-rwxrwxrwx 1 bessabr bessabr   84 Sep 23 16:05 demo.check-trust
+-rwxrwxrwx 1 bessabr bessabr   65 Sep 23 16:05 demo.check-trust.fm-sig
+-rwxrwxrwx 1 bessabr bessabr   18 Sep 23 16:05 demo.check.sh
+-rwxrwxrwx 1 bessabr bessabr   65 Sep 23 16:05 demo.check.sh.fm-sig
+$ FM_HOME=/mnt/c/fm-live-modeless.MuCUS3/head head/bin/fm-procevent-when.sh arm live --condition true --action true
+error: state directory is not a private directory the process-event runtime accepts; a watch armed here would never start
+exit=1
+
+=== [head] tamper after registration on mode-incapable home
+tampered check no longer registered (refused)
+
+=== [base] mode-CAPABLE control /tmp/fm-live-capable.OcXus3/base (state 700)
+$ register with check mode 644
+error: custom check is unavailable
+exit=1
+$ register with check mode 700
+registered: state/demo.check.sh
+exit=0
+-rw------- 1 bessabr bessabr   84 Sep 23 16:05 demo.check-trust
+-rwx------ 1 bessabr bessabr   18 Sep 23 16:05 demo.check.sh
+fm-sig sidecars: 0
+$ procevent-when arm
+armed: when-live
+starts on the watcher's next cycle; or run: bin/fm-procevent.sh reconcile
+reminder: deterministic, safe, reversible actions only; judgment and destructive actions stay on the wake-and-decide path
+exit=0
+
+=== [head] mode-CAPABLE control /tmp/fm-live-capable.OcXus3/head (state 700)
+$ register with check mode 644
+error: custom check is unavailable
+exit=1
+$ register with check mode 700
+registered: state/demo.check.sh
+exit=0
+-rw------- 1 bessabr bessabr   84 Sep 23 16:05 demo.check-trust
+-rwx------ 1 bessabr bessabr   18 Sep 23 16:05 demo.check.sh
+fm-sig sidecars: 0
+$ procevent-when arm
+armed: when-live
+starts on the watcher's next cycle; or run: bin/fm-procevent.sh reconcile
+reminder: deterministic, safe, reversible actions only; judgment and destructive actions stay on the wake-and-decide path
+exit=0

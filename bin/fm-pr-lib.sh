@@ -354,8 +354,8 @@ fm_pr_sha256_stdin() {
 # had before this fallback existed rather than funnelling it into a signature
 # path this directory never sealed anything on.
 fm_pr_dir_mode_incapable() {
-  local dir=$1 probe got
-  probe=$(mktemp "$dir/.fm-mode-probe.XXXXXX" 2>/dev/null) || return 1
+  local probe_dir=$1 probe got
+  probe=$(mktemp "$probe_dir/.fm-mode-probe.XXXXXX" 2>/dev/null) || return 1
   chmod 0600 "$probe" 2>/dev/null
   got=$(fm_pr_file_mode "$probe")
   rm -f -- "$probe"
@@ -431,9 +431,9 @@ fm_pr_artifact_signature() {
 # enforcement absent. When the caller later renames path to its real
 # destination, it must also rename path.fm-sig alongside it.
 fm_pr_secure_file() {
-  local path=$1 mode=$2 state=$3 device=$4 dir key sig tmp
-  dir=$(dirname -- "$path")
-  if ! fm_pr_dir_mode_incapable "$dir"; then
+  local path=$1 mode=$2 state=$3 device=$4 artifact_dir key sig tmp
+  artifact_dir=$(dirname -- "$path")
+  if ! fm_pr_dir_mode_incapable "$artifact_dir"; then
     chmod "$mode" "$path" || return 1
     return 0
   fi
@@ -451,7 +451,7 @@ fm_pr_secure_file() {
   # on the very filesystem this fallback exists for a co-resident actor could
   # pre-create that name and have the digest written outside the state
   # directory; rename(2) onto a validated destination cannot do that.
-  tmp=$(mktemp "$dir/.fm-artifact-sig.XXXXXX") || return 1
+  tmp=$(mktemp "$artifact_dir/.fm-artifact-sig.XXXXXX") || return 1
   printf '%s\n' "$sig" > "$tmp" || { rm -f -- "$tmp"; return 1; }
   chmod 0600 "$tmp" 2>/dev/null
   if ! fm_pr_regular_destination_or_absent "$path.fm-sig" \
@@ -468,12 +468,12 @@ fm_pr_secure_file() {
 # directory's own filesystem, such as one bind-mounted over the name, which is
 # also what keeps same-directory rename publication atomic.
 fm_pr_private_file_valid() {
-  local path=$1 mode=$2 state=$3 device=$4 dir key want sig
+  local path=$1 mode=$2 state=$3 device=$4 artifact_dir key want sig
   [ -f "$path" ] && [ ! -L "$path" ] || return 1
   [ "$(fm_pr_file_device "$path")" = "$device" ] || return 1
   [ "$(fm_pr_file_link_count "$path")" = 1 ] || return 1
-  dir=$(dirname -- "$path")
-  if ! fm_pr_dir_mode_incapable "$dir"; then
+  artifact_dir=$(dirname -- "$path")
+  if ! fm_pr_dir_mode_incapable "$artifact_dir"; then
     [ "$(fm_pr_file_mode "$path")" = "$mode" ]
     return $?
   fi

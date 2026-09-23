@@ -1533,6 +1533,27 @@ clear_pause_tracking() {  # <window-key>
   clear_stale_hash_tracking "$key"
 }
 
+# The clear a PANE-scoped observation is entitled to, and the single owner of why
+# the two halves are not interchangeable. A busy signature, a fresh hash, or a
+# count that is not stably stale yet all say something about the PANE; none of
+# them says anything about the wait the worker declared. The re-surface throttle
+# is bound to that DECLARATION (stale_wait_declaration), so erasing it on a pane
+# event hands the same unchanged wait a brand-new window: the next idle sighting
+# reads no throttle, alarms, re-arms it, and the next pane event erases it again -
+# a declared pause rechecked every couple of minutes instead of once per
+# PAUSE_RESURFACE_SECS. While the status log's last line still declares the wait,
+# reset only the per-hash half. Once that line is gone the pane is an ordinary one
+# again and its whole pause bookkeeping goes with it, so an undeclared wedge keeps
+# exactly the detection it has today.
+clear_pane_stale_tracking() {  # <window-key> <last-status-line>
+  local key=$1 last=$2
+  if status_is_paused_or_captain_held "$last"; then
+    clear_stale_hash_tracking "$key"
+  else
+    clear_pause_tracking "$key"
+  fi
+}
+
 # Reconcile a declared pause or captain-held status with authoritative crew state.
 # After fm-crew-state has fallen back to stopped or unknown, paused classification is
 # recovered only for a confidently dead ordinary crew, or for a secondmate, whose
@@ -2899,10 +2920,13 @@ EOF
         fi
         # A busy pane normally means real work resumed, so stale pause bookkeeping
         # is cleared - but not in the same poll the declared-pause cadence just
-        # recorded it, or the re-surface throttle it depends on would be erased and
-        # the pause would re-surface every poll instead of once per long cadence.
-        if [ "$paused_bound" -ne 0 ] && [ -e "$pf" ] && { [ "$n" -ge 2 ] || ! status_is_paused_or_captain_held "$(last_status_line "$STATE/$(window_to_task "$w" "$STATE").status")"; }; then
-          clear_pause_tracking "$key"
+        # recorded it, and never the declaration-scoped half while the worker's own
+        # line still declares the wait (clear_pane_stale_tracking owns that split).
+        if [ "$paused_bound" -ne 0 ] && [ -e "$pf" ]; then
+          pane_last=$(last_status_line "$STATE/$task.status")
+          if [ "$n" -ge 2 ] || ! status_is_paused_or_captain_held "$pane_last"; then
+            clear_pane_stale_tracking "$key" "$pane_last"
+          fi
         fi
       fi
     else
@@ -2920,20 +2944,16 @@ EOF
         case "$(pause_state_class "$w" "$task")" in
           paused) handle_paused_stale "$w" "$task" "$h" ;;
           # Inconclusive, but the declared wait itself still stands, so only the
-          # per-hash bookkeeping resets. The re-surface throttle bounds the
-          # DECLARATION, not the pane hash: an idle parked pane whose display
-          # ticks (a clock, a token counter) changes hash without changing what
-          # is being waited on, and clearing the throttle here would hand that
-          # same wait a fresh window on every tick - the first sight of each new
-          # hash reaches surface_nonterminal_stale below, so the whole declared
-          # wait would re-alarm far inside PAUSE_RESURFACE_SECS.
+          # per-hash bookkeeping resets (clear_pane_stale_tracking's header owns
+          # why the declaration-scoped half must survive a pane event).
           none)   clear_stale_hash_tracking "$key" ;;
           *)      clear_pause_tracking "$key" ;;
         esac
       elif [ "$paused_bound" -ne 0 ] && [ -e "$pf" ]; then
         # Same rule as the stable-hash branch: never clear pause bookkeeping the
-        # declared-pause cadence recorded on this very poll.
-        clear_pause_tracking "$key"
+        # declared-pause cadence recorded on this very poll, and never its
+        # declaration-scoped half while that declaration still stands.
+        clear_pane_stale_tracking "$key" "$(last_status_line "$STATE/$task.status")"
       fi
     fi
   done < <(recorded_windows)

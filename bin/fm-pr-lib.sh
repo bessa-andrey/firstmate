@@ -4,13 +4,15 @@
 # URLs before constructing task paths or performing any side effect.
 #
 # The stored identity is provider-tagged: provider, url, host, path, number.
-# "path" is the full project path, which is owner/repository on GitHub and an
-# arbitrarily nested group/subgroup/project namespace on GitLab. A GitLab
-# project can sit at any depth, so no owner/repository pair can address one and
-# the sidecar carries the whole path instead. GitLab also runs on self-hosted
-# instances, so the host is part of that identity rather than a constant. Every
-# consumer re-derives the identity from the stored URL and refuses any record
-# whose parts do not reconstruct that exact URL.
+# "path" is the full project path, which is owner/repository on GitHub, an
+# arbitrarily nested group/subgroup/project namespace on GitLab, and an
+# arbitrarily nested project name on Gerrit, where "number" is the change
+# number. A GitLab or Gerrit project can sit at any depth, so no
+# owner/repository pair can address one and the sidecar carries the whole path
+# instead. Both also run on self-hosted instances, and Gerrit runs nowhere else,
+# so the host is part of that identity rather than a constant. Every consumer re-derives the identity
+# from the stored URL and refuses any record whose parts do not reconstruct that
+# exact URL.
 #
 # A validated exact merged result is retired through a private receipt only
 # after its durable wake is appended.
@@ -61,6 +63,7 @@ FM_PR_POLL_EXPECT_TEMPLATE_HASH=
 FM_PR_POLL_EXPECT_DATA_IDENTITY=
 FM_PR_POLL_EXPECT_CHECK_IDENTITY=
 FM_PR_POLL_TEMPLATE=
+FM_PR_POLL_STATE=
 FM_PR_POLL_STATE_DEVICE=
 FM_PR_POLL_SNAPSHOT_ID=
 FM_PR_POLL_SNAPSHOT_PROVIDER=
@@ -113,14 +116,14 @@ fm_task_id_creation_valid() {
   [ "${#id}" -le 64 ]
 }
 
-# GitLab serves self-hosted instances, so the host is part of the identity
-# rather than a constant. It is accepted only as a lowercase DNS name with no
-# userinfo, port, or trailing dot, which keeps one canonical spelling per MR.
-# github.com is refused here even though its shape is otherwise valid: it is
-# GitHub's own host and never a GitLab instance, so a URL like
+# GitLab and Gerrit both serve self-hosted instances, so the host is part of the
+# identity rather than a constant. It is accepted only as a lowercase DNS name
+# with no userinfo, port, or trailing dot, which keeps one canonical spelling per
+# change. github.com is refused here even though its shape is otherwise valid:
+# it is GitHub's own host and never another forge's instance, so a URL like
 # https://github.com/o/r/-/merge_requests/1 (a typo'd or spoofed GitHub URL)
-# would otherwise be armed as a GitLab watch that can never succeed.
-fm_pr_gitlab_host_valid() {
+# would otherwise be armed as a watch that can never succeed.
+fm_pr_forge_host_valid() {
   local host=${1-} label
   local LC_ALL=C
   local -a labels
@@ -160,15 +163,42 @@ fm_pr_gitlab_path_valid() {
   done
 }
 
-# Parse a canonical PR or MR URL into the provider-tagged identity. Validation
-# is strict and per provider: the GitHub username and repository rules are
-# unchanged, and GitLab gets its own host and namespace rules rather than a
-# loosened GitHub rule.
+# A Gerrit project name is itself a path at no fixed depth, and it needs no
+# enclosing group, so a single segment is canonical here where GitLab needs at
+# least two. Gerrit reserves no route segment inside the name, so nothing
+# corresponds to GitLab's "-": the change URL's literal "/+/" is what ends the
+# project instead. A ".git" suffix is refused because Gerrit strips it and the
+# stripped name is the canonical one, and a leading hyphen is refused because a
+# project path is what names the project to any CLI that takes one, where a
+# leading hyphen reads as an option instead.
+fm_pr_gerrit_path_valid() {
+  local path=${1-} segment
+  local LC_ALL=C
+  local -a segments
+  [ "${#path}" -ge 1 ] && [ "${#path}" -le 1024 ] || return 1
+  case "$path" in
+    /*|*/|*//*) return 1 ;;
+  esac
+  IFS=/ read -ra segments <<< "$path"
+  [ "${#segments[@]}" -ge 1 ] && [ "${#segments[@]}" -le 20 ] || return 1
+  for segment in "${segments[@]}"; do
+    [ "${#segment}" -ge 1 ] && [ "${#segment}" -le 255 ] || return 1
+    case "$segment" in
+      .|..|-*|*.git|*[!A-Za-z0-9._-]*) return 1 ;;
+    esac
+  done
+}
+
+# Parse a canonical pull request, merge request, or Gerrit change URL into the
+# provider-tagged identity. Validation is strict and per provider: the GitHub
+# username and repository rules are unchanged, and GitLab and Gerrit each get
+# their own namespace rules rather than a loosened GitHub rule.
 #
 # FM_PR_OWNER and FM_PR_REPO are additionally set for github because
-# bin/fm-pr-merge.sh addresses GitHub by owner/repository. A gitlab URL leaves
-# them empty, and that path addresses the project by FM_PR_HOST and FM_PR_PATH
-# instead, so a merge request on any instance resolves without a hardcoded host.
+# bin/fm-pr-merge.sh addresses GitHub by owner/repository. A gitlab or gerrit
+# URL leaves them empty, and those paths address the project by FM_PR_HOST and
+# FM_PR_PATH instead, so a change on any instance resolves without a hardcoded
+# host.
 fm_pr_url_parse() {
   local raw=${1-} pattern host path
   local LC_ALL=C
@@ -199,12 +229,31 @@ fm_pr_url_parse() {
   # "/-/merge_requests/". Any earlier separator therefore lands inside the
   # captured path, where the reserved "-" segment is refused.
   pattern='^https://([a-z0-9.-]{1,253})/([A-Za-z0-9._/-]+)/-/merge_requests/([1-9][0-9]*)$'
+  if [[ "$raw" =~ $pattern ]]; then
+    host=${BASH_REMATCH[1]}
+    path=${BASH_REMATCH[2]}
+    fm_pr_forge_host_valid "$host" || return 1
+    fm_pr_gitlab_path_valid "$path" || return 1
+    FM_PR_PROVIDER=gitlab
+    FM_PR_URL=$raw
+    FM_PR_HOST=$host
+    FM_PR_PATH=$path
+    FM_PR_NUMBER=${BASH_REMATCH[3]}
+    return 0
+  fi
+  # A Gerrit change URL is https://<host>/c/<project>/+/<number>. "+" is outside
+  # the path class, so the project can never contain the "/+/" separator and this
+  # match needs no greediness argument: a second "/+/" makes the URL match
+  # nothing rather than splitting somewhere else. The project keeps its whole
+  # nested path for the same reason GitLab's does, so it is never flattened into
+  # an owner/repository pair that cannot address it.
+  pattern='^https://([a-z0-9.-]{1,253})/c/([A-Za-z0-9._/-]+)/\+/([1-9][0-9]*)$'
   [[ "$raw" =~ $pattern ]] || return 1
   host=${BASH_REMATCH[1]}
   path=${BASH_REMATCH[2]}
-  fm_pr_gitlab_host_valid "$host" || return 1
-  fm_pr_gitlab_path_valid "$path" || return 1
-  FM_PR_PROVIDER=gitlab
+  fm_pr_forge_host_valid "$host" || return 1
+  fm_pr_gerrit_path_valid "$path" || return 1
+  FM_PR_PROVIDER=gerrit
   FM_PR_URL=$raw
   FM_PR_HOST=$host
   FM_PR_PATH=$path
@@ -283,17 +332,156 @@ fm_pr_sha256() {
   fi
 }
 
+fm_pr_sha256_stdin() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 2>/dev/null | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum 2>/dev/null | awk '{print $1}'
+  else
+    return 1
+  fi
+}
+
+# Some mounts (a Windows/OneDrive path bind-mounted into WSL2 is the measured
+# case) accept the chmod(2) call without the mode ever sticking, so a single
+# file's reported mode cannot tell "attacker loosened this" apart from
+# "this mount cannot hold restricted modes at all." A throwaway probe written
+# in the SAME directory answers that question directly. This reports incapacity
+# only on POSITIVE PROOF - a probe that was created and then failed to hold the
+# requested mode. A probe that could not be created or stat'ed at all (a
+# transient condition on a perfectly capable device: ENOSPC, a read-only
+# remount) proves nothing, so it leaves every caller on the strict mode path it
+# had before this fallback existed rather than funnelling it into a signature
+# path this directory never sealed anything on.
+fm_pr_dir_mode_incapable() {
+  local probe_dir=$1 probe got
+  probe=$(mktemp "$probe_dir/.fm-mode-probe.XXXXXX" 2>/dev/null) || return 1
+  chmod 0600 "$probe" 2>/dev/null
+  got=$(fm_pr_file_mode "$probe")
+  rm -f -- "$probe"
+  [ -n "$got" ] && [ "$got" != 600 ]
+}
+
+# Root secret for fm_pr_artifact_signature, established once per state
+# directory. A mode-capable device also chmods it 600 for defense in depth,
+# but callers on an incapable device cannot rely on that mode holding, so its
+# trust rests on the structural checks (regular file, no symlink, one
+# hardlink, same device) rather than on its own mode.
+fm_pr_signing_key_read() {
+  local key_path=$1 device=$2 key
+  [ -f "$key_path" ] && [ ! -L "$key_path" ] || return 1
+  [ "$(fm_pr_file_device "$key_path")" = "$device" ] || return 1
+  [ "$(fm_pr_file_link_count "$key_path")" = 1 ] || return 1
+  key=$(cat "$key_path" 2>/dev/null) || return 1
+  [[ "$key" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s' "$key"
+}
+
+fm_pr_signing_key() {
+  local state=$1 device=$2 tmp key
+  local key_path=$state/.fm-artifact-signing-key
+  if key=$(fm_pr_signing_key_read "$key_path" "$device"); then
+    printf '%s' "$key"
+    return 0
+  fi
+  key=$(LC_ALL=C od -An -v -tx1 -N 32 /dev/urandom 2>/dev/null | tr -d ' \n') || return 1
+  [[ "$key" =~ ^[0-9a-f]{64}$ ]] || return 1
+  tmp=$(mktemp "$state/.fm-artifact-signing-key.XXXXXX") || return 1
+  printf '%s' "$key" > "$tmp" || { rm -f -- "$tmp"; return 1; }
+  chmod 0600 "$tmp" 2>/dev/null
+  # A concurrent caller may have won the race to create the key file; either
+  # way, re-read whatever is on disk now rather than trust the key generated
+  # in this call, so every reader of this state directory converges on one key.
+  # The re-read runs the same structural checks as the first read, so a name
+  # pre-created by someone else is refused here exactly as it was above.
+  mv -n -- "$tmp" "$key_path" 2>/dev/null
+  rm -f -- "$tmp"
+  fm_pr_signing_key_read "$key_path" "$device"
+}
+
+# Keyed digest over the artifact's exact bytes. This is deliberately a keyed
+# concatenation digest over CONTENT ONLY, not a path-bound HMAC: every call
+# site below stages content under a throwaway mktemp name and only renames it
+# to its real name afterward (the atomic-write pattern used everywhere in this
+# codebase), so a signature bound to the staging name would stop matching the
+# instant the rename made it real. Content-only signing also means the sidecar
+# just has to travel with a `mv` for a rename to keep validating, with no
+# identity bookkeeping. The only tool guaranteed present is a bare sha256
+# implementation (shasum or sha256sum), and this construction
+# needs nothing more than that. It defends against corruption, partial
+# writes, and a writer that does not hold the key - never against a
+# co-resident actor who can already read every byte in a directory the
+# filesystem cannot restrict, a guarantee file-mode enforcement could not
+# provide there either; that actor could copy a valid (content, signature)
+# pair onto another artifact's path just as easily as forging one outright,
+# which costs nothing further given they already hold write access the mode
+# check was equally unable to deny them.
+fm_pr_artifact_signature() {
+  local key=$1 content_file=$2
+  { printf '%s\0' "$key"; cat "$content_file"; } | fm_pr_sha256_stdin
+}
+
+# Make a freshly-written private artifact private in whatever way this
+# filesystem can actually hold. Callers replace their existing
+# `chmod "$mode" "$path" || exit 1` with a call to this function at the exact
+# same point in their write sequence; fm_pr_private_file_valid below is the
+# matching read-side check. Nothing else about the call site's sequence
+# changes, and a mode-capable device behaves exactly as before: this function
+# only takes the signature path once fm_pr_dir_mode_incapable has proven mode
+# enforcement absent. When the caller later renames path to its real
+# destination, it must also rename path.fm-sig alongside it.
+fm_pr_secure_file() {
+  local path=$1 mode=$2 state=$3 device=$4 artifact_dir key sig tmp
+  artifact_dir=$(dirname -- "$path")
+  if ! fm_pr_dir_mode_incapable "$artifact_dir"; then
+    chmod "$mode" "$path" || return 1
+    return 0
+  fi
+  # Four call sites ask for 700, where the mode carries EXECUTABILITY and not
+  # only privacy: the watcher runs those artifacts directly. "Cannot hold
+  # restricted modes" is wider than the measured 777 case - a vfat/exfat mount
+  # with umask=022 hands back 644, which is unexecutable - so whatever bits
+  # this mount CAN hold are still applied before the signature is taken.
+  chmod "$mode" "$path" 2>/dev/null || true
+  key=$(fm_pr_signing_key "$state" "$device") || return 1
+  sig=$(fm_pr_artifact_signature "$key" "$path") || return 1
+  # The sidecar is published with the same staged-write-then-rename discipline
+  # every other artifact in this file uses. A bare redirect FOLLOWS a symlink,
+  # and one call site (fm-check-register.sh) names its sidecar predictably, so
+  # on the very filesystem this fallback exists for a co-resident actor could
+  # pre-create that name and have the digest written outside the state
+  # directory; rename(2) onto a validated destination cannot do that.
+  tmp=$(mktemp "$artifact_dir/.fm-artifact-sig.XXXXXX") || return 1
+  printf '%s\n' "$sig" > "$tmp" || { rm -f -- "$tmp"; return 1; }
+  chmod 0600 "$tmp" 2>/dev/null
+  if ! fm_pr_regular_destination_or_absent "$path.fm-sig" \
+    || ! mv -f -- "$tmp" "$path.fm-sig"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  return 0
+}
+
 # Callers pass the containing directory's device read in the same invocation,
 # never a persisted one, so this compares two live readings and survives a
 # remount that renumbers the volume. It refuses a file that is not on that
 # directory's own filesystem, such as one bind-mounted over the name, which is
 # also what keeps same-directory rename publication atomic.
 fm_pr_private_file_valid() {
-  local path=$1 mode=$2 device=$3
+  local path=$1 mode=$2 state=$3 device=$4 artifact_dir key want sig
   [ -f "$path" ] && [ ! -L "$path" ] || return 1
-  [ "$(fm_pr_file_mode "$path")" = "$mode" ] || return 1
   [ "$(fm_pr_file_device "$path")" = "$device" ] || return 1
-  [ "$(fm_pr_file_link_count "$path")" = 1 ]
+  [ "$(fm_pr_file_link_count "$path")" = 1 ] || return 1
+  artifact_dir=$(dirname -- "$path")
+  if ! fm_pr_dir_mode_incapable "$artifact_dir"; then
+    [ "$(fm_pr_file_mode "$path")" = "$mode" ]
+    return $?
+  fi
+  [ -f "$path.fm-sig" ] && [ ! -L "$path.fm-sig" ] || return 1
+  key=$(fm_pr_signing_key "$state" "$device") || return 1
+  want=$(fm_pr_artifact_signature "$key" "$path") || return 1
+  sig=$(cat "$path.fm-sig" 2>/dev/null) || return 1
+  [ "$sig" = "$want" ]
 }
 
 fm_pr_regular_destination_or_absent() {
@@ -445,9 +633,9 @@ fm_pr_poll_registration_parse() {
 }
 
 fm_pr_poll_cleanup() {
-  [ -z "$FM_PR_POLL_DATA_TMP" ] || rm -f -- "$FM_PR_POLL_DATA_TMP"
-  [ -z "$FM_PR_POLL_CHECK_TMP" ] || rm -f -- "$FM_PR_POLL_CHECK_TMP"
-  [ -z "$FM_PR_POLL_REG_TMP" ] || rm -f -- "$FM_PR_POLL_REG_TMP"
+  [ -z "$FM_PR_POLL_DATA_TMP" ] || rm -f -- "$FM_PR_POLL_DATA_TMP" "$FM_PR_POLL_DATA_TMP.fm-sig"
+  [ -z "$FM_PR_POLL_CHECK_TMP" ] || rm -f -- "$FM_PR_POLL_CHECK_TMP" "$FM_PR_POLL_CHECK_TMP.fm-sig"
+  [ -z "$FM_PR_POLL_REG_TMP" ] || rm -f -- "$FM_PR_POLL_REG_TMP" "$FM_PR_POLL_REG_TMP.fm-sig"
   FM_PR_POLL_DATA_TMP=
   FM_PR_POLL_CHECK_TMP=
   FM_PR_POLL_REG_TMP=
@@ -466,6 +654,9 @@ fm_pr_poll_revoke_final() {
   if [ -e "$FM_PR_POLL_DATA_DEST" ] || [ -L "$FM_PR_POLL_DATA_DEST" ]; then
     rm -f -- "$FM_PR_POLL_DATA_DEST" || failed=1
   fi
+  # Best-effort: a signature sidecar only exists on a mode-incapable device,
+  # and leaving it behind is harmless leftover, never a correctness problem.
+  rm -f -- "$FM_PR_POLL_CHECK_DEST.fm-sig" "$FM_PR_POLL_REG_DEST.fm-sig" "$FM_PR_POLL_DATA_DEST.fm-sig" 2>/dev/null
   [ ! -e "$FM_PR_POLL_CHECK_DEST" ] && [ ! -L "$FM_PR_POLL_CHECK_DEST" ] || failed=1
   [ ! -e "$FM_PR_POLL_REG_DEST" ] && [ ! -L "$FM_PR_POLL_REG_DEST" ] || failed=1
   [ ! -e "$FM_PR_POLL_DATA_DEST" ] && [ ! -L "$FM_PR_POLL_DATA_DEST" ] || failed=1
@@ -496,6 +687,7 @@ fm_pr_poll_prepare() {
   FM_PR_POLL_EXPECT_PATH=$path
   FM_PR_POLL_EXPECT_NUMBER=$number
   FM_PR_POLL_TEMPLATE=$template
+  FM_PR_POLL_STATE=$state
   FM_PR_POLL_STATE_DEVICE=$(fm_pr_file_device "$state") || return 1
   [ -n "$FM_PR_POLL_STATE_DEVICE" ] || return 1
   FM_PR_POLL_DATA_TMP=$(mktemp "$state/.fm-pr-poll-data.XXXXXX") || return 1
@@ -509,8 +701,8 @@ fm_pr_poll_prepare() {
   }
 
   if ! printf '%s\n%s\n%s\n%s\n%s\n' "$provider" "$url" "$host" "$path" "$number" > "$FM_PR_POLL_DATA_TMP" \
-    || ! chmod 0600 "$FM_PR_POLL_DATA_TMP" \
-    || ! fm_pr_private_file_valid "$FM_PR_POLL_DATA_TMP" 600 "$FM_PR_POLL_STATE_DEVICE" \
+    || ! fm_pr_secure_file "$FM_PR_POLL_DATA_TMP" 600 "$state" "$FM_PR_POLL_STATE_DEVICE" \
+    || ! fm_pr_private_file_valid "$FM_PR_POLL_DATA_TMP" 600 "$state" "$FM_PR_POLL_STATE_DEVICE" \
     || ! fm_pr_poll_data_parse "$FM_PR_POLL_DATA_TMP" \
     || [ "$FM_PR_DATA_PROVIDER" != "$provider" ] \
     || [ "$FM_PR_DATA_URL" != "$url" ] \
@@ -518,8 +710,8 @@ fm_pr_poll_prepare() {
     || [ "$FM_PR_DATA_PATH" != "$path" ] \
     || [ "$FM_PR_DATA_NUMBER" != "$number" ] \
     || ! cp "$template" "$FM_PR_POLL_CHECK_TMP" \
-    || ! chmod 0600 "$FM_PR_POLL_CHECK_TMP" \
-    || ! fm_pr_private_file_valid "$FM_PR_POLL_CHECK_TMP" 600 "$FM_PR_POLL_STATE_DEVICE" \
+    || ! fm_pr_secure_file "$FM_PR_POLL_CHECK_TMP" 600 "$state" "$FM_PR_POLL_STATE_DEVICE" \
+    || ! fm_pr_private_file_valid "$FM_PR_POLL_CHECK_TMP" 600 "$state" "$FM_PR_POLL_STATE_DEVICE" \
     || ! cmp -s "$template" "$FM_PR_POLL_CHECK_TMP"; then
     fm_pr_poll_cleanup
     return 1
@@ -533,8 +725,8 @@ fm_pr_poll_prepare() {
       "$FM_PR_POLL_EXPECT_DATA_HASH" "$FM_PR_POLL_EXPECT_TEMPLATE_HASH" \
       "$FM_PR_POLL_EXPECT_DATA_IDENTITY" "$FM_PR_POLL_EXPECT_CHECK_IDENTITY" \
       > "$FM_PR_POLL_REG_TMP" \
-    || ! chmod 0600 "$FM_PR_POLL_REG_TMP" \
-    || ! fm_pr_private_file_valid "$FM_PR_POLL_REG_TMP" 600 "$FM_PR_POLL_STATE_DEVICE" \
+    || ! fm_pr_secure_file "$FM_PR_POLL_REG_TMP" 600 "$state" "$FM_PR_POLL_STATE_DEVICE" \
+    || ! fm_pr_private_file_valid "$FM_PR_POLL_REG_TMP" 600 "$state" "$FM_PR_POLL_STATE_DEVICE" \
     || ! fm_pr_poll_registration_parse "$FM_PR_POLL_REG_TMP" \
     || [ "$FM_PR_REG_ID" != "$id" ] \
     || [ "$FM_PR_REG_DATA_HASH" != "$FM_PR_POLL_EXPECT_DATA_HASH" ] \
@@ -557,8 +749,12 @@ fm_pr_poll_publish_prepared() {
     fm_pr_poll_revoke_final || true
     return 1
   fi
+  # The sidecar carries the signature computed for the tmp path; it must ride
+  # along with the rename or the destination looks never-sealed. Absence
+  # here is the ordinary mode-capable case, not an error.
+  mv -f -- "$FM_PR_POLL_DATA_TMP.fm-sig" "$FM_PR_POLL_DATA_DEST.fm-sig" 2>/dev/null || true
   FM_PR_POLL_DATA_TMP=
-  if ! fm_pr_private_file_valid "$FM_PR_POLL_DATA_DEST" 600 "$FM_PR_POLL_STATE_DEVICE" \
+  if ! fm_pr_private_file_valid "$FM_PR_POLL_DATA_DEST" 600 "$FM_PR_POLL_STATE" "$FM_PR_POLL_STATE_DEVICE" \
     || [ "$(fm_pr_file_identity "$FM_PR_POLL_DATA_DEST")" != "$FM_PR_POLL_EXPECT_DATA_IDENTITY" ] \
     || [ "$(fm_pr_sha256 "$FM_PR_POLL_DATA_DEST")" != "$FM_PR_POLL_EXPECT_DATA_HASH" ] \
     || ! fm_pr_poll_data_parse "$FM_PR_POLL_DATA_DEST" \
@@ -575,8 +771,9 @@ fm_pr_poll_publish_prepared() {
     fm_pr_poll_revoke_final || true
     return 1
   fi
+  mv -f -- "$FM_PR_POLL_REG_TMP.fm-sig" "$FM_PR_POLL_REG_DEST.fm-sig" 2>/dev/null || true
   FM_PR_POLL_REG_TMP=
-  if ! fm_pr_private_file_valid "$FM_PR_POLL_REG_DEST" 600 "$FM_PR_POLL_STATE_DEVICE" \
+  if ! fm_pr_private_file_valid "$FM_PR_POLL_REG_DEST" 600 "$FM_PR_POLL_STATE" "$FM_PR_POLL_STATE_DEVICE" \
     || ! fm_pr_poll_registration_parse "$FM_PR_POLL_REG_DEST" \
     || [ "$FM_PR_REG_ID" != "$FM_PR_POLL_EXPECT_ID" ] \
     || [ "$FM_PR_REG_PROVIDER" != "$FM_PR_POLL_EXPECT_PROVIDER" ] \
@@ -597,6 +794,7 @@ fm_pr_poll_publish_prepared() {
     fm_pr_poll_revoke_final || true
     return 1
   fi
+  mv -f -- "$FM_PR_POLL_CHECK_TMP.fm-sig" "$FM_PR_POLL_CHECK_DEST.fm-sig" 2>/dev/null || true
   FM_PR_POLL_CHECK_TMP=
   if ! fm_pr_poll_artifacts_valid "${FM_PR_POLL_CHECK_DEST%/*}" "$FM_PR_POLL_EXPECT_ID" "$FM_PR_POLL_TEMPLATE"; then
     fm_pr_poll_revoke_final || true
@@ -630,9 +828,9 @@ fm_pr_poll_artifacts_content_valid() {
   data="$state/$id.pr-poll"
   registration="$state/$id.pr-poll-registration"
   meta="$state/$id.meta"
-  fm_pr_private_file_valid "$check" 600 "$state_device" || return 1
-  fm_pr_private_file_valid "$data" 600 "$state_device" || return 1
-  fm_pr_private_file_valid "$registration" 600 "$state_device" || return 1
+  fm_pr_private_file_valid "$check" 600 "$state" "$state_device" || return 1
+  fm_pr_private_file_valid "$data" 600 "$state" "$state_device" || return 1
+  fm_pr_private_file_valid "$registration" 600 "$state" "$state_device" || return 1
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
   [ "$(fm_pr_file_link_count "$meta")" = 1 ] || return 1
   cmp -s "$template" "$check" || return 1
@@ -719,8 +917,8 @@ fm_pr_poll_registration_rerecord_device() {  # <state> <id> <template>
   if ! printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
       fm-pr-poll-registration-v2 "$id_line" "$provider" "$url" "$host" "$path" "$number" \
       "$data_hash" "$template_hash" "$data_identity" "$check_identity" > "$tmp" \
-    || ! chmod 0600 "$tmp" \
-    || ! fm_pr_private_file_valid "$tmp" 600 "$state_device" \
+    || ! fm_pr_secure_file "$tmp" 600 "$state" "$state_device" \
+    || ! fm_pr_private_file_valid "$tmp" 600 "$state" "$state_device" \
     || ! fm_pr_poll_registration_parse "$tmp" \
     || [ "$FM_PR_REG_ID" != "$id" ] \
     || [ "$FM_PR_REG_URL" != "$url" ] \
@@ -735,9 +933,10 @@ fm_pr_poll_registration_rerecord_device() {  # <state> <id> <template>
     || [ "$(fm_pr_file_identity "$registration")" != "$reg_identity" ] \
     || ! fm_pr_regular_destination_on_device_or_absent "$registration" "$state_device" \
     || ! mv -f -- "$tmp" "$registration"; then
-    rm -f -- "$tmp"
+    rm -f -- "$tmp" "$tmp.fm-sig"
     return 1
   fi
+  mv -f -- "$tmp.fm-sig" "$registration.fm-sig" 2>/dev/null || true
   fm_pr_poll_artifacts_valid "$state" "$id" "$template"
 }
 
@@ -849,7 +1048,7 @@ fm_pr_poll_retirement_receipt_valid() {
   [ -d "$state" ] && [ ! -L "$state" ] || return 1
   state_device=$(fm_pr_file_device "$state") || return 1
   receipt="$state/$id.pr-poll-retirement"
-  fm_pr_private_file_valid "$receipt" 600 "$state_device" || return 1
+  fm_pr_private_file_valid "$receipt" 600 "$state" "$state_device" || return 1
   fm_pr_poll_retirement_parse "$receipt" || return 1
   [ "$FM_PR_RETIRE_ID" = "$id" ] || return 1
   meta="$state/$id.meta"
@@ -999,11 +1198,86 @@ FIELDS
   FM_PR_RECORD_MERGED=$merged
 }
 
+# gerrit-axi resolves its server from the current directory's origin remote
+# first, so the host is passed explicitly from the parsed identity and a read
+# outside a clone still reaches the right server. A change number is
+# server-global and --host pins the server, so the number alone names the
+# change and the project path is not part of the read. Prints the one record
+# whose change number is exactly <number> as compact JSON, and fails on any
+# other reading. The record's own url field is not compared against the stored
+# URL, because Gerrit composes it from gerrit.canonicalWebUrl and omits it when
+# that setting is unset, which would turn every read on such a server into a
+# permanent unknown.
+fm_pr_gerrit_read_change() {  # <host> <number>
+  local host=$1 number=$2 json
+  command -v gerrit-axi >/dev/null 2>&1 || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  case "$number" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  if ! json=$(gerrit-axi show "$number" --host "$host" --json 2>/dev/null) \
+    || [ -z "$json" ]; then
+    return 1
+  fi
+  printf '%s' "$json" | jq -c --argjson change "$number" '
+    if type == "object" and .ok == true and (.changes | type) == "array" then
+      [.changes[] | select((.change | type) == "number" and .change == $change)] as $match
+      | if ($match | length) == 1 and ($match[0] | type) == "object"
+        then $match[0]
+        else error("no exact change record")
+        end
+    else
+      error("invalid gerrit record")
+    end' 2>/dev/null
+}
+
+# The status of one Gerrit change. The status is the only field read: a merged
+# change and an approved-but-unsubmitted one report the same submit,
+# submittable, and blocked_on values, so only the status separates them.
+fm_pr_gerrit_read_record() {  # <host> <number>
+  local record state merged=false
+  FM_PR_RECORD_STATE=
+  FM_PR_RECORD_MERGED=
+  record=$(fm_pr_gerrit_read_change "$1" "$2") || return 1
+  state=$(printf '%s' "$record" | jq -r '
+    if (.status | type) == "string" and .status != "" and (.status | test("\n") | not)
+    then .status
+    else error("no status")
+    end' 2>/dev/null) || return 1
+  [ -n "$state" ] || return 1
+  [ "$state" != MERGED ] || merged=true
+
+  # Consumed by bin/fm-crew-state.sh passed_pr_detail.
+  # shellcheck disable=SC2034
+  FM_PR_RECORD_STATE=$state
+  # Consumed by bin/fm-crew-state.sh passed_pr_detail.
+  # shellcheck disable=SC2034
+  FM_PR_RECORD_MERGED=$merged
+}
+
+# The current patch set revision of one Gerrit change, read from the same exact
+# record as its status above. Consumed by bin/fm-dod-lib.sh's named-head gate,
+# which accepts a published change only when this revision carries the worker
+# copy's HEAD tree. It is a live read and never a recorded pr_head: the next
+# amend replaces it.
+fm_pr_gerrit_read_revision() {  # <host> <number>
+  local record revision
+  FM_PR_RECORD_REVISION=
+  record=$(fm_pr_gerrit_read_change "$1" "$2") || return 1
+  revision=$(printf '%s' "$record" | jq -r '
+    if (.revision | type) == "string" then .revision else error("no revision") end' 2>/dev/null) \
+    || return 1
+  fm_pr_head_valid "$revision" || return 1
+  # Consumed by bin/fm-dod-lib.sh fm_dod_gerrit_change_carries_head.
+  # shellcheck disable=SC2034
+  FM_PR_RECORD_REVISION=$revision
+}
+
 fm_pr_poll_retirement_data_valid() {
   local state=$1 id=$2 state_device data data_hash data_identity
   state_device=$(fm_pr_file_device "$state") || return 1
   data="$state/$id.pr-poll"
-  fm_pr_private_file_valid "$data" 600 "$state_device" || return 1
+  fm_pr_private_file_valid "$data" 600 "$state" "$state_device" || return 1
   fm_pr_poll_data_parse "$data" || return 1
   data_hash=$(fm_pr_sha256 "$data") || return 1
   data_identity=$(fm_pr_file_identity "$data") || return 1
@@ -1020,7 +1294,7 @@ fm_pr_poll_retirement_registration_valid() {
   local state=$1 id=$2 state_device registration reg_hash reg_identity
   state_device=$(fm_pr_file_device "$state") || return 1
   registration="$state/$id.pr-poll-registration"
-  fm_pr_private_file_valid "$registration" 600 "$state_device" || return 1
+  fm_pr_private_file_valid "$registration" 600 "$state" "$state_device" || return 1
   fm_pr_poll_registration_parse "$registration" || return 1
   reg_hash=$(fm_pr_sha256 "$registration") || return 1
   reg_identity=$(fm_pr_file_identity "$registration") || return 1
@@ -1042,7 +1316,7 @@ fm_pr_poll_retirement_check_valid() {
   local state=$1 id=$2 state_device check check_hash check_identity
   state_device=$(fm_pr_file_device "$state") || return 1
   check="$state/$id.check.sh"
-  fm_pr_private_file_valid "$check" 600 "$state_device" || return 1
+  fm_pr_private_file_valid "$check" 600 "$state" "$state_device" || return 1
   check_hash=$(fm_pr_sha256 "$check") || return 1
   check_identity=$(fm_pr_file_identity "$check") || return 1
   [ "$check_hash" = "$FM_PR_RETIRE_TEMPLATE_HASH" ] || return 1
@@ -1075,11 +1349,12 @@ fm_pr_poll_retirement_state_valid() {
 }
 
 fm_pr_poll_retirement_remove_exact() {
-  local path=$1 state_device=$2 expected_identity=$3 expected_hash=$4
-  fm_pr_private_file_valid "$path" 600 "$state_device" || return 1
+  local path=$1 state=$2 state_device=$3 expected_identity=$4 expected_hash=$5
+  fm_pr_private_file_valid "$path" 600 "$state" "$state_device" || return 1
   [ "$(fm_pr_file_identity "$path")" = "$expected_identity" ] || return 1
   [ "$(fm_pr_sha256 "$path")" = "$expected_hash" ] || return 1
   rm -f -- "$path" || return 1
+  rm -f -- "$path.fm-sig" 2>/dev/null
   [ ! -e "$path" ] && [ ! -L "$path" ]
 }
 
@@ -1090,7 +1365,7 @@ fm_pr_poll_retirement_discard_obsolete() {
   [ -d "$state" ] && [ ! -L "$state" ] || return 1
   state_device=$(fm_pr_file_device "$state") || return 1
   receipt="$state/$id.pr-poll-retirement"
-  fm_pr_private_file_valid "$receipt" 600 "$state_device" || return 1
+  fm_pr_private_file_valid "$receipt" 600 "$state" "$state_device" || return 1
   fm_pr_poll_retirement_parse "$receipt" || return 1
   [ "$FM_PR_RETIRE_ID" = "$id" ] || return 1
   receipt_hash=$(fm_pr_sha256 "$receipt") || return 1
@@ -1105,7 +1380,7 @@ fm_pr_poll_retirement_discard_obsolete() {
     && [ "$FM_PR_REG_CHECK_IDENTITY" = "$FM_PR_RETIRE_CHECK_IDENTITY" ]; then
     return 1
   fi
-  fm_pr_poll_retirement_remove_exact "$receipt" "$state_device" \
+  fm_pr_poll_retirement_remove_exact "$receipt" "$state" "$state_device" \
     "$receipt_identity" "$receipt_hash"
 }
 
@@ -1134,17 +1409,18 @@ fm_pr_poll_retirement_publish() {
       "$FM_PR_POLL_SNAPSHOT_REG_HASH" \
       "$FM_PR_POLL_SNAPSHOT_REG_IDENTITY" \
       merged > "$tmp" \
-    || ! chmod 0600 "$tmp" \
-    || ! fm_pr_private_file_valid "$tmp" 600 "$state_device" \
+    || ! fm_pr_secure_file "$tmp" 600 "$state" "$state_device" \
+    || ! fm_pr_private_file_valid "$tmp" 600 "$state" "$state_device" \
     || ! fm_pr_poll_retirement_parse "$tmp" \
     || [ "$FM_PR_RETIRE_ID" != "$id" ] \
     || ! fm_pr_poll_snapshot_matches "$state" "$id" "$template" \
     || ! fm_pr_regular_destination_on_device_or_absent "$receipt" "$state_device" \
     || [ -e "$receipt" ] || [ -L "$receipt" ] \
     || ! mv -f -- "$tmp" "$receipt"; then
-    rm -f -- "$tmp"
+    rm -f -- "$tmp" "$tmp.fm-sig"
     return 1
   fi
+  mv -f -- "$tmp.fm-sig" "$receipt.fm-sig" 2>/dev/null || true
   fm_pr_poll_retirement_receipt_valid "$state" "$id" || return 1
 }
 
@@ -1167,18 +1443,18 @@ fm_pr_poll_retirement_recover_one() {
   receipt_hash=$FM_PR_RETIRE_RECEIPT_HASH
   receipt_identity=$FM_PR_RETIRE_RECEIPT_IDENTITY
   if [ -e "$check" ] || [ -L "$check" ]; then
-    fm_pr_poll_retirement_remove_exact "$check" "$state_device" \
+    fm_pr_poll_retirement_remove_exact "$check" "$state" "$state_device" \
       "$FM_PR_RETIRE_CHECK_IDENTITY" "$FM_PR_RETIRE_TEMPLATE_HASH" || return 1
   fi
   if [ -e "$registration" ] || [ -L "$registration" ]; then
-    fm_pr_poll_retirement_remove_exact "$registration" "$state_device" \
+    fm_pr_poll_retirement_remove_exact "$registration" "$state" "$state_device" \
       "$FM_PR_RETIRE_REG_IDENTITY" "$FM_PR_RETIRE_REG_HASH" || return 1
   fi
   if [ -e "$data" ] || [ -L "$data" ]; then
-    fm_pr_poll_retirement_remove_exact "$data" "$state_device" \
+    fm_pr_poll_retirement_remove_exact "$data" "$state" "$state_device" \
       "$FM_PR_RETIRE_DATA_IDENTITY" "$FM_PR_RETIRE_DATA_HASH" || return 1
   fi
-  fm_pr_poll_retirement_remove_exact "$receipt" "$state_device" \
+  fm_pr_poll_retirement_remove_exact "$receipt" "$state" "$state_device" \
     "$receipt_identity" "$receipt_hash" || return 1
   [ ! -e "$check" ] && [ ! -L "$check" ] \
     && [ ! -e "$registration" ] && [ ! -L "$registration" ] \
@@ -1210,10 +1486,10 @@ fm_pr_poll_retirement_recover_all() {
 # matching identity is a no-op; a different PR for the same task reaches its
 # role-routed supervision destination and replaces the marker when its first
 # outcome is published.
-fm_pr_poll_merge_marker_matches() {  # <marker> <device> <provider> <host> <path> <number>
-  local marker=$1 device=$2 expected_provider=$3 expected_host=$4 expected_path=$5 expected_number=$6
+fm_pr_poll_merge_marker_matches() {  # <marker> <state> <device> <provider> <host> <path> <number>
+  local marker=$1 state=$2 device=$3 expected_provider=$4 expected_host=$5 expected_path=$6 expected_number=$7
   local version provider host path number
-  fm_pr_private_file_valid "$marker" 600 "$device" || return 1
+  fm_pr_private_file_valid "$marker" 600 "$state" "$device" || return 1
   exec 8< "$marker" || return 1
   IFS= read -r version <&8 || { exec 8<&-; return 1; }
   IFS= read -r provider <&8 || { exec 8<&-; return 1; }
@@ -1238,7 +1514,7 @@ fm_pr_poll_merge_already_notified() {  # <state> <id> <provider> <host> <path> <
   [ -d "$state" ] && [ ! -L "$state" ] || return 1
   state_device=$(fm_pr_file_device "$state") || return 1
   marker="$state/$id.pr-poll-merge-notified"
-  fm_pr_poll_merge_marker_matches "$marker" "$state_device" \
+  fm_pr_poll_merge_marker_matches "$marker" "$state" "$state_device" \
     "$provider" "$host" "$path" "$number"
 }
 
@@ -1253,16 +1529,17 @@ fm_pr_poll_merge_mark_notified() {  # <state> <id> <provider> <host> <path> <num
   tmp=$(mktemp "$state/.fm-pr-poll-merge-notified.XXXXXX") || return 1
   if ! printf '%s\n%s\n%s\n%s\n%s\n' \
       fm-pr-poll-merge-notified-v1 "$provider" "$host" "$path" "$number" > "$tmp" \
-    || ! chmod 0600 "$tmp" \
-    || ! fm_pr_poll_merge_marker_matches "$tmp" "$state_device" \
+    || ! fm_pr_secure_file "$tmp" 600 "$state" "$state_device" \
+    || ! fm_pr_poll_merge_marker_matches "$tmp" "$state" "$state_device" \
       "$provider" "$host" "$path" "$number" \
     || ! fm_pr_regular_destination_on_device_or_absent "$marker" "$state_device" \
-    || ! mv -f -- "$tmp" "$marker" \
-    || ! fm_pr_poll_merge_marker_matches "$marker" "$state_device" \
-      "$provider" "$host" "$path" "$number"; then
-    rm -f -- "$tmp"
+    || ! mv -f -- "$tmp" "$marker"; then
+    rm -f -- "$tmp" "$tmp.fm-sig"
     return 1
   fi
+  mv -f -- "$tmp.fm-sig" "$marker.fm-sig" 2>/dev/null || true
+  fm_pr_poll_merge_marker_matches "$marker" "$state" "$state_device" \
+    "$provider" "$host" "$path" "$number"
 }
 
 # Removed at teardown alongside the other per-task PR-poll artifacts
@@ -1274,4 +1551,5 @@ fm_pr_poll_merge_notified_remove() {  # <state> <id>
   [ -e "$marker" ] || [ -L "$marker" ] || return 0
   [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
   rm -f -- "$marker"
+  rm -f -- "$marker.fm-sig" 2>/dev/null
 }

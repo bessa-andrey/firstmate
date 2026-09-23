@@ -471,6 +471,108 @@ Observed output:
 fm-claude-stop-autoarm: ok
 ```
 
+### Non-empty Stop-hook blocks on a mode-reverting filesystem, 2026-09-09
+
+The rule that no blocking exit of either Claude Stop hook may be empty, owned by [`../turnend-guard.md`](../turnend-guard.md#harness-integrations), was validated on 2026-09-09 against the real condition that produced the incident rather than a simulated one, on WSL2 (Linux 6.6.87.2-microsoft-standard-WSL2).
+The filesystem is real; the harness is not, so this is not a live-Claude pass: the tracked hook scripts run hermetically under the suite's fake `claude` parent, as they do in every other case of these two suites.
+
+Host condition that made the case eligible: `/mnt/c` reverts `chmod` while still executing what it stores, and the Linux-disk `$TMPDIR` holds restricted modes, so both the mode-incapable case and its mode-capable control ran instead of skipping.
+
+```text
+### mode-incapable root: /mnt/c/fm-autoarm-modeless.h55IZr
+### state dir mode after chmod 700: 777
+### file mode after chmod 600: 777
+### control state dir mode after chmod 700: 700
+```
+
+Both suites ran to completion with the host-dependent cases live:
+
+```sh
+tests/fm-claude-stop-autoarm.test.sh
+tests/fm-turnend-guard.test.sh
+```
+
+Observed output:
+
+```text
+ok - auto-arm: a state directory that cannot hold restricted modes never blocks a turn with empty output
+ok - auto-arm: a home whose state dir can hold restricted modes keeps its silent and actionable paths unchanged
+ok - fm-turnend-guard --claude: an unrecordable episode reset blocks with a named cause, never in silence
+```
+
+The original failure was reproduced first on that same mount, by copying the pre-fix `bin/fm-claude-stop-autoarm.sh` from base `55d4069` into the fixture and firing it three times.
+The tracked suite asserts rather than prints, so the transcripts below came from a throwaway driver that reused the suite's own fixture helpers and the real hook; it is not a tracked entry point.
+
+```text
+### PRE-FIX hook (base 55d4069) on the same mode-reverting mount
+### firing 1: exit=2 output_bytes=305
+### firing 2: exit=2 output_bytes=0
+### firing 3: exit=2 output_bytes=0
+### epoch: epoch=3 owner_pid=3998062 outcome=failed-suppressed updated_at=1788979736
+```
+
+That is the incident exactly: the turn is held closed, the epoch records `failed-suppressed`, and after the one notice the operator is shown nothing at all.
+
+Operator-visible text the current hook prints on the same fixture:
+
+```text
+### ---- firing 1 ----
+### exit=2
+firstmate watcher auto-arm FAILED - the Stop-owned automatic supervision mechanism is broken after 2 bounded attempts, and no live watcher with a fresh beacon was verified.
+fm-pr-check-migrate: cannot publish /mnt/c/fm-autoarm-modeless.h55IZr/home/state/pr-check.tmp: mode 777, expected 600
+Episode state is recorded in /mnt/c/fm-autoarm-modeless.h55IZr/home/state/.claude-autoarm-epoch.
+Do not launch a manual background arm from this notice; investigate the automatic Stop hook and watcher startup before ending blind.
+### ---- firing 2 ----
+### exit=2
+firstmate watcher auto-arm STILL FAILING - this turn is held open for another Stop-owned retry. The full notice for this failure episode was already delivered, so only the current cause is repeated here.
+fm-pr-check-migrate: cannot publish /mnt/c/fm-autoarm-modeless.h55IZr/home/state/pr-check.tmp: mode 777, expected 600
+Episode state is recorded in /mnt/c/fm-autoarm-modeless.h55IZr/home/state/.claude-autoarm-epoch (outcome=failed-suppressed). Investigate the automatic Stop hook and watcher startup; do not launch a manual background arm.
+```
+
+Firing 3 repeated firing 2 verbatim.
+The refusal line is the helper's own untyped text, which the arm relays and the pre-fix prefix-only filter dropped entirely; the full notice still lands once per episode while every later block names the current cause and the ledger to read.
+
+Mode-capable control on the Linux disk, same hook, state dir holding `700`:
+
+```text
+### healthy verified close: exit=0 output_bytes=0
+### actionable wake: exit=2
+firstmate watcher wake - one supervision event needs a handling turn now.
+stale: fixture-win actionable
+Run bin/fm-wake-drain.sh first, handle the wake, then run its exact WAKE_ACK_REQUIRED --ack-through command. Until that post-handling acknowledgement, interruption leaves the wake durable for idempotent re-handling. This Stop hook owns watcher continuity: when the handling turn ends, the next needed cycle arms automatically - do NOT run bin/fm-watch-arm.sh after an ordinary wake.
+```
+
+The healthy close stays byte-for-byte silent and the actionable rewake banner is unchanged, so a home whose state directory can hold restricted modes sees no behaviour change.
+At the time of this pass, strict mode enforcement was untouched: the arm still refused to publish an artifact that could not hold `600`, and only the diagnosability of the resulting block changed.
+The modeless-fs-scope decision below replaced that refusal with a signature fallback, so a mode-incapable device no longer loses the artifact outright; see that entry for the current behaviour.
+
+### modeless-fs-scope: signature fallback on a mode-incapable device, 2026-09-12
+
+The captain decided modeless-fs-scope option C: replace the permission-mode protection above with integrity verification by signature on a filesystem that cannot hold restricted modes, without moving artifacts and without a per-home opt-out.
+`fm_pr_private_file_valid` and its write-side counterpart `fm_pr_secure_file`, both in `bin/fm-pr-lib.sh`, are the single owner every private-artifact call site in the tree routes through (PR-poll artifacts, registered custom checks, condition->action watch specs, and the tool-update and mail-check shims).
+A directory is probed with a throwaway file before either function decides which path to take, and the probe reports incapacity only on positive proof - a probe that was created and then failed to hold the requested mode. A probe that could not be created at all (ENOSPC, a read-only remount) proves nothing and leaves the caller on the strict mode path, so a capable directory keeps the exact `chmod`-and-compare behaviour it always had even while it is transiently unwritable.
+On a proven-incapable directory, `fm_pr_secure_file` writes a keyed sha256 signature sidecar (`<artifact>.fm-sig`) instead of relying on the mode, and `fm_pr_private_file_valid` verifies the artifact's current bytes against that sidecar instead of its mode.
+The key is a per-state-directory secret established on first use; the signature is content-only (not path-bound), so a sidecar travels correctly with the same atomic mktemp-then-rename pattern every call site already used for its mode-capable path.
+This defends against corruption, partial writes, and a writer that does not hold the key; it does not defend against a co-resident actor who can already read every byte in a directory the filesystem cannot restrict; file-mode enforcement could not defend against that actor there either.
+Condition->action watch specs are the exception on the measured mount: the process-event runtime that runs them still requires a private state root, and there the state directory itself reverts to `777`. So `fm-procevent-when.sh arm` refuses loudly with "state directory is not a private directory the process-event runtime accepts" instead of sealing a spec by signature and reporting a watch armed that could never start; `tests/fm-procevent-when.test.sh` ("arm refuses loudly where the runner could never start") proves that refusal.
+
+Verified with `tests/fm-pr-check-security.test.sh` (`test_mode_incapable_device_seals_and_verifies_by_signature`, `test_mode_incapable_device_refuses_a_symlinked_sidecar_destination`, `test_mode_incapable_device_retires_a_merged_poll_with_its_sidecar`, `test_mode_capable_device_behavior_is_unchanged`, `test_mode_capable_device_keeps_mode_enforcement_when_it_cannot_be_probed`), on the same class of real mode-reverting mount as the entry above, reproducing the revert before trusting it:
+
+```sh
+bin/fm-test-run.sh tests/fm-pr-check-security.test.sh
+```
+
+Observed output (relevant lines):
+
+```text
+ok - a mode-incapable device seals a fresh artifact by signature and still catches tampering
+ok - a symlinked sidecar destination is refused instead of written through
+ok - a merged poll retires with its sidecar on a mode-incapable device
+ok - a mode-capable device keeps its exact mode-only behavior, with no signature sidecar
+ok - a capable device that cannot be probed keeps enforcing modes
+FM_TEST_END 2026-09-23T17:13:10Z tests/fm-pr-check-security.test.sh exit=0 duration_ms=157632 gate_skip=false
+```
+
 ## Watcher continuity
 
 The cross-harness evidence combines the 2026-07-17 live pass with Claude's replacement Stop-owned path revalidated on 2026-09-21, all against isolated project and home state.

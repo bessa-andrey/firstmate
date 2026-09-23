@@ -1,0 +1,52 @@
+### FIXED (252f0af) - real tmux grok pane, declared 'paused:' wait; every ~15s a relaunch-shaped event: meta rewritten with a new spawn_gen, fresh turn-ended marker, 3s busy startup footer; FM_PAUSE_RESURFACE_SECS=60, 100s run
+fakebin now: fm-crew-state.sh 
+pane_current_command=grok
+t=4s watcher exited (firstmate woken); ack and re-arm
+  queued: stale fmlab:fm-parked stale: fmlab:fm-parked
+t=15s watcher exited (firstmate woken); ack and re-arm
+  queued: signal parked.turn-ended signal: /tmp/fm-watch-triage-tests.iht6o2/live-rfix/state/parked.turn-ended
+t=32s watcher exited (firstmate woken); ack and re-arm
+  queued: signal parked.turn-ended signal: /tmp/fm-watch-triage-tests.iht6o2/live-rfix/state/parked.turn-ended
+t=47s watcher exited (firstmate woken); ack and re-arm
+  queued: signal parked.turn-ended signal: /tmp/fm-watch-triage-tests.iht6o2/live-rfix/state/parked.turn-ended
+t=64s watcher exited (firstmate woken); ack and re-arm
+  queued: stale fmlab:fm-parked stale: fmlab:fm-parked (paused 63s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+t=66s watcher exited (firstmate woken); ack and re-arm
+  queued: signal parked.turn-ended signal: /tmp/fm-watch-triage-tests.iht6o2/live-rfix/state/parked.turn-ended
+t=80s watcher exited (firstmate woken); ack and re-arm
+  queued: signal parked.turn-ended signal: /tmp/fm-watch-triage-tests.iht6o2/live-rfix/state/parked.turn-ended
+t=98s watcher exited (firstmate woken); ack and re-arm
+  queued: signal parked.turn-ended signal: /tmp/fm-watch-triage-tests.iht6o2/live-rfix/state/parked.turn-ended
+--- final pane:
+  transcript line 1
+  transcript line 2
+  transcript line 3
+  transcript line 4
+  transcript line 5
+  transcript line 6
+  transcript line 7
+  transcript line 8
+  transcript line 9
+  transcript line 10
+  transcript line 11
+  transcript line 12
+  transcript line 13
+  transcript line 14
+parked on a declared wait (idle after blip 6)
+--- watcher tail:
+signal: /tmp/fm-watch-triage-tests.iht6o2/live-rfix/state/parked.turn-ended
+stale: fmlab:fm-parked (paused 63s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+signal: /tmp/fm-watch-triage-tests.iht6o2/live-rfix/state/parked.turn-ended
+signal: /tmp/fm-watch-triage-tests.iht6o2/live-rfix/state/parked.turn-ended
+signal: /tmp/fm-watch-triage-tests.iht6o2/live-rfix/state/parked.turn-ended
+--- stale wakes queued for fmlab:fm-parked over 100s (resurface=60s, blips=1):
+0
+--- wake-queue kinds:
+--- triage log tail:
+[2026-09-23T14:13:50-0400] absorbed stale (paused, awaiting external, age 86s): fmlab:fm-parked
+[2026-09-23T14:13:52-0400] absorbed stale (paused, awaiting external, age 88s): fmlab:fm-parked
+[2026-09-23T14:13:53-0400] absorbed stale (paused, awaiting external, age 89s): fmlab:fm-parked
+[2026-09-23T14:13:54-0400] absorbed stale (paused, awaiting external, age 90s): fmlab:fm-parked
+[2026-09-23T14:13:56-0400] absorbed stale (paused, awaiting external, age 92s): fmlab:fm-parked
+[2026-09-23T14:14:00-0400] absorbed stale (paused, awaiting external, age 96s): fmlab:fm-parked
+--- absorbed-paused lines: 33

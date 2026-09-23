@@ -1,0 +1,7 @@
+== base: stale wakes (t, payload)
+  t=4s stale: fmlab:fm-parked
+  t=19s stale: fmlab:fm-parked
+  t=85s stale: fmlab:fm-parked
+== fixed: stale wakes (t, payload)
+  t=4s stale: fmlab:fm-parked
+  t=64s stale: fmlab:fm-parked (paused 63s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)

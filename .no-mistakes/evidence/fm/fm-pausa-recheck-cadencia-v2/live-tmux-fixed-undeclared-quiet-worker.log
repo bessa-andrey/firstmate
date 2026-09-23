@@ -1,0 +1,27 @@
+### FIXED branch (252f0af) - real tmux grok pane, NO declared wait (status 'working: halfway through the migration'), crew state stopped, pane goes quiet with busy blips every ~15s, FM_PAUSE_RESURFACE_SECS=60, 60s run
+fakebin now: fm-crew-state.sh 
+pane_current_command=grok
+t=4s watcher exited (firstmate woken); ack and re-arm
+  queued: stale fmlab:fm-parked stale: fmlab:fm-parked
+t=18s watcher exited (firstmate woken); ack and re-arm
+  queued: stale fmlab:fm-parked stale: fmlab:fm-parked
+t=37s watcher exited (firstmate woken); ack and re-arm
+  queued: stale fmlab:fm-parked stale: fmlab:fm-parked
+t=52s watcher exited (firstmate woken); ack and re-arm
+  queued: stale fmlab:fm-parked stale: fmlab:fm-parked
+--- final pane:
+thinking about the reply  Ctrl+c:cancel
+--- watcher tail:
+stale: fmlab:fm-parked
+stale: fmlab:fm-parked
+stale: fmlab:fm-parked
+stale: fmlab:fm-parked
+--- stale wakes queued for fmlab:fm-parked over 60s (resurface=60s, blips=1):
+0
+--- wake-queue kinds:
+--- triage log tail:
+[2026-09-23T14:11:13-0400] absorbed non-terminal stale timer reset: fmlab:fm-parked
+[2026-09-23T14:11:27-0400] absorbed non-terminal stale timer reset: fmlab:fm-parked
+[2026-09-23T14:11:46-0400] absorbed non-terminal stale timer reset: fmlab:fm-parked
+[2026-09-23T14:12:01-0400] absorbed non-terminal stale timer reset: fmlab:fm-parked
+--- absorbed-paused lines: 0

@@ -1,0 +1,24 @@
+== test_busy_blip_does_not_restart_the_declared_pause_cadence
+ok - a busy blip on a parked pane keeps the declared wait on its long recheck cadence, and the wait is still reconfirmed when that window elapses
+rc=0
+== test_pane_without_a_standing_declaration_still_alarms
+ok - a pane with no standing declaration loses its pause bookkeeping to the same pane event and still wakes firstmate
+rc=0
+== test_relaunch_does_not_restart_the_declared_pause_cadence
+ok - a relaunch keeps an unchanged declared wait on its long recheck cadence while a different wait declared afterwards still surfaces at once
+rc=0
+== test_nonterminal_stale_paused_absorbed_then_resurfaced
+ok - a declared pause is absorbed on first sight, then re-surfaced as a recheck past the threshold, never wedge-escalated
+rc=0
+== test_absorbed_replacement_wait_does_not_inherit_the_old_throttle
+ok - absorbed paused and captain-held replacements each start their own re-surface cadence
+rc=0
+== test_live_declared_wait_churn_honors_the_resurface_throttle
+ok - a parked live worker surfaces once, absorbs pane churn for the whole re-surface window, then re-surfaces when it elapses
+rc=0
+== test_wedge_threshold_defers_to_a_declared_wait_under_a_working_verdict
+ok - a declared wait is not wedge-escalated by a working verdict, while an elapsed declaration and an undeclared lane both keep the unchanged ladder
+rc=0
+== test_paused_authoritative_working_preserves_wedge_timer
+ok - a paused status overridden by authoritative working preserves its wedge timer, is rechecked rather than wedge-escalated while the declaration stands, and escalates once it is lifted
+rc=0

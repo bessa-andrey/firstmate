@@ -1,0 +1,54 @@
+### BASE (9296f9b) - real tmux grok pane, declared 'paused:' wait; every ~15s a relaunch-shaped event: meta rewritten with a new spawn_gen, fresh turn-ended marker, 3s busy startup footer; FM_PAUSE_RESURFACE_SECS=60, 100s run
+fakebin now: fm-crew-state.sh 
+pane_current_command=grok
+t=4s watcher exited (firstmate woken); ack and re-arm
+  queued: stale fmlab:fm-parked stale: fmlab:fm-parked
+t=15s watcher exited (firstmate woken); ack and re-arm
+  queued: signal parked.turn-ended signal: /tmp/fm-watch-triage-tests.ARHm2o/live-rbase/state/parked.turn-ended
+t=19s watcher exited (firstmate woken); ack and re-arm
+  queued: stale fmlab:fm-parked stale: fmlab:fm-parked
+t=33s watcher exited (firstmate woken); ack and re-arm
+  queued: signal parked.turn-ended signal: /tmp/fm-watch-triage-tests.ARHm2o/live-rbase/state/parked.turn-ended
+t=48s watcher exited (firstmate woken); ack and re-arm
+  queued: signal parked.turn-ended signal: /tmp/fm-watch-triage-tests.ARHm2o/live-rbase/state/parked.turn-ended
+t=65s watcher exited (firstmate woken); ack and re-arm
+  queued: signal parked.turn-ended signal: /tmp/fm-watch-triage-tests.ARHm2o/live-rbase/state/parked.turn-ended
+t=80s watcher exited (firstmate woken); ack and re-arm
+  queued: signal parked.turn-ended signal: /tmp/fm-watch-triage-tests.ARHm2o/live-rbase/state/parked.turn-ended
+t=85s watcher exited (firstmate woken); ack and re-arm
+  queued: stale fmlab:fm-parked stale: fmlab:fm-parked
+t=98s watcher exited (firstmate woken); ack and re-arm
+  queued: signal parked.turn-ended signal: /tmp/fm-watch-triage-tests.ARHm2o/live-rbase/state/parked.turn-ended
+--- final pane:
+  transcript line 1
+  transcript line 2
+  transcript line 3
+  transcript line 4
+  transcript line 5
+  transcript line 6
+  transcript line 7
+  transcript line 8
+  transcript line 9
+  transcript line 10
+  transcript line 11
+  transcript line 12
+  transcript line 13
+  transcript line 14
+parked on a declared wait (idle after blip 6)
+--- watcher tail:
+signal: /tmp/fm-watch-triage-tests.ARHm2o/live-rbase/state/parked.turn-ended
+signal: /tmp/fm-watch-triage-tests.ARHm2o/live-rbase/state/parked.turn-ended
+signal: /tmp/fm-watch-triage-tests.ARHm2o/live-rbase/state/parked.turn-ended
+stale: fmlab:fm-parked
+signal: /tmp/fm-watch-triage-tests.ARHm2o/live-rbase/state/parked.turn-ended
+--- stale wakes queued for fmlab:fm-parked over 100s (resurface=60s, blips=1):
+0
+--- wake-queue kinds:
+--- triage log tail:
+[2026-09-23T14:13:41-0400] absorbed stale (paused, awaiting external, age 77s): fmlab:fm-parked
+[2026-09-23T14:13:51-0400] absorbed stale (paused, awaiting external, age 87s): fmlab:fm-parked
+[2026-09-23T14:13:52-0400] absorbed stale (paused, awaiting external, age 88s): fmlab:fm-parked
+[2026-09-23T14:13:53-0400] absorbed stale (paused, awaiting external, age 89s): fmlab:fm-parked
+[2026-09-23T14:13:55-0400] absorbed stale (paused, awaiting external, age 91s): fmlab:fm-parked
+[2026-09-23T14:13:56-0400] absorbed stale (paused, awaiting external, age 92s): fmlab:fm-parked
+--- absorbed-paused lines: 34

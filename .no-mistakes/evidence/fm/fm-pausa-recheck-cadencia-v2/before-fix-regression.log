@@ -1,0 +1,9 @@
+== BASE fm-watch.sh: test_busy_blip_does_not_restart_the_declared_pause_cadence
+not ok - [paused-busy-blip] a busy blip cleared the re-surface throttle on round 2
+rc=1
+== BASE fm-watch.sh: test_pane_without_a_standing_declaration_still_alarms
+ok - a pane with no standing declaration loses its pause bookkeeping to the same pane event and still wakes firstmate
+rc=0
+== BASE fm-watch.sh: test_relaunch_does_not_restart_the_declared_pause_cadence
+not ok - the relaunch cleared the declared wait's re-surface throttle
+rc=1
